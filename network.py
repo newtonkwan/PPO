@@ -12,7 +12,21 @@ class FeedForwardNN(nn.Module):
         self.layer2 = nn.Linear(64, 64)
         self.layer3 = nn.Linear(64, out_dim)
 
-        forward.
+    def forward(self, obs):
+        # used for both actor (policy) and critic (state value)
+
+        # in case our input obs is a numpy array, we convert it 
+        # to a tensor
+        if isinstance(obs, np.ndarray):
+            obs = torch.tensor(obs, dtype=torch.float)
+        
+        activation1 = F.relu(self.layer1(obs))
+        activation2 = F.relu(self.layer2(activation1))
+        output = self.layer3(activation2)
+
+        return output
+
+        
 
 
 
