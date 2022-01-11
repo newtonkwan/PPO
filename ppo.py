@@ -1,6 +1,7 @@
 import torch
 from torch.distributions import MultivariateNormal
 from network import FeedForwardNN
+from torch.optim import Adam 
 
 class PPO: 
 
@@ -22,6 +23,22 @@ class PPO:
         self.cov_var = torch.full(size=(self.act_dim, ), fill_value=0.5) # 0.5 is arbitrary
         self.cov_mat = torch.diag(self.cov_var)
 
+        # clip 
+        self.clip = 0.2 # as recommended by the paper
+
+        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
+
+
+    def _init_hyperparameters(self):
+        # defeault values for hyperparameters, will need to change later 
+
+        self.timesteps_per_batch = 4800         # timesteps per batch (number of episodes = rollouts = tau = trajectories)
+        self.max_timesteps_per_episode = 1600   # timesteps per episode (FYI: trajectories = episodes = tau = rollouts) 
+        self.gamma = 0.95                       # discount factor 
+        self.n_updates_per_iteration = 5        # number of iterations per epoch 
+        self.lr = 0.005                         # learning rate
+
+
     def learn(self, total_timesteps):
         # will increment later
 
@@ -30,13 +47,36 @@ class PPO:
             # ALG STEP 3 
             batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout()
 
-    
-    def _init_hyperparameters(self):
-        # defeault values for hyperparameters, will need to change later 
+            # Calculate V_{phi, k} # state value 
+            V, _ = self.evaluate(self, batch_obs)
 
-        self.timesteps_per_batch = 4800         # timesteps per batch (number of episodes = rollouts = tau = trajectories)
-        self.max_timesteps_per_episode = 1600   # timesteps per episode (FYI: trajectories = episodes = tau = rollouts) 
-        self.gamma = 0.95                       # discount factor 
+            # ALG step 5 
+            # evaluate advantage 
+            A_k = batch_rtgs - V.detach()
+
+            # Normalize advantage to make things more stable
+            A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
+
+            for _ in range(self.n_updates_per_iteration):
+                # calculate pi_theta(a_t | s_t)
+                _, curr_log_probs = self.evaluate(batch_obs, batch_acts)
+
+                # calculate ratios 
+                ratios = torch.exp(curr_log_probs - batch_log_probs)
+
+                # calculate surrogate loss 
+                surr1 = ratios * A_k
+                surr2 = torch.clamp(ratios, 1-self.clip, 1+self.clip)*A_k
+
+                # note the negative sign is bc we want to maximize the function
+                # Adam will minimize the loss 
+                # minimizing negative loss = maximizing loss 
+                actor_loss = (-torch.min(surr1, surr2)).mean())
+
+                # calculate gradients and perform backward propagation for actor network 
+                self.actor_optim.zero_grad()
+                actor_loss.backward()
+                self.actor_optim.step()
 
     def get_action(self, obs):
         # gets the action from the observation 
@@ -63,6 +103,7 @@ class PPO:
     def compute_rtgs(self, batch_rews):
         # the rewards to go (rtg) per episode per batch to return. 
         # the shape will be the (num timesteps per episode) 
+        # this is Q 
         batch_rtgs = []
 
         # iterate through each epsiode backwards to maintain the same order in batch_rtgs 
@@ -140,10 +181,22 @@ class PPO:
         batch_rtgs = self.compute_rtgs(batch_rews)
 
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens
+
+    def evaluate(self, batch_obs): 
+        # Query critic network for a value of V for each obs in batch_obs
+        V = self.critic(batch_obs).squeeze
+
+        # Calculate the log probability 
+        mean = self.actor(batch_obs)
+        dist = MultivariateNormal(mean, self.cov_mat)
+        log_probs = dist.log_prob(batch_acts)
+
+        # return predicted values V and log probs, log_probs
+        return V, log_probs
+
                 
             
                 
-
 
 
 
